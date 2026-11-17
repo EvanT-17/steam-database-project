@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steam database demo</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <div class="wrap header-inner">
+    <div><span class="brand">STEAM<span> / DATABASE DEMO</span></span><p>A local game store for your MySQL project</p></div>
+    <div>{% if session.get('user_id') %}Signed in as <strong>{{ session.username }}</strong>
+      <form class="inline" method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Log out</button></form>
+    {% else %}Not signed in{% endif %}</div>
+  </div>
+</header>
+<main class="wrap">
+  <div class="notice">Local classroom demo · Purchases are simulated; no real payment is processed.</div>
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="alert {{ category }}" role="status">{{ message }}</div>
+  {% endfor %}
+
+  {% if not session.get('user_id') %}
+  <section class="auth-grid">
+    <div class="panel">
+      <h2>Sign in</h2>
+      <form method="post" action="{{ url_for('login') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Username<input name="username" required maxlength="100" autocomplete="username"></label>
+        <label>Password<input type="password" name="password" required maxlength="128" autocomplete="current-password"></label>
+        <button>Sign in</button>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>Create account</h2>
+      <form method="post" action="{{ url_for('register') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Username<input name="username" required maxlength="100" autocomplete="username"></label>
+        <label>Email<input type="email" name="email" required maxlength="254" autocomplete="email"></label>
+        <label>Password<input type="password" name="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        <button>Create account</button>
+      </form>
+    </div>
+  </section>
+  {% endif %}
+
+  <section>
+    <div class="section-head"><div><p class="eyebrow">DISCOVER</p><h1>Game store</h1></div>
+      <form method="get" class="search"><input name="q" value="{{ query }}" placeholder="Search games" aria-label="Search games"><button>Search</button></form>
+    </div>
+    <div class="cards">
+      {% for game in games %}
+      <article class="card">
+        <div class="cover"><span>GAME</span><strong>{{ game.title }}</strong></div>
+        <div class="card-body">
+          <h3>{{ game.title }}</h3><p class="muted">{{ game.developer }}{% if game.release_date %} · {{ game.release_date }}{% endif %}</p>
+          <div class="buy-row"><strong>{{ game.price }}</strong>
+            {% if session.get('user_id') %}
+              {% if game.owned %}<span class="owned">In library</span>{% else %}
+              <form method="post" action="{{ url_for('buy', game_id=game.game_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Buy (demo)</button>
+              </form>{% endif %}
+            {% else %}<span class="muted">Sign in to buy</span>{% endif %}
+          </div>
+          <div class="reviews">
+            <h4>Reviews</h4>
+            {% for review in reviews if review.game_id == game.game_id %}
+              <div class="review"><strong>{{ review.username }}</strong> · {{ 'Recommended' if review.recommended else 'Not recommended' }}
+                <p>{{ review.content }}</p></div>
+            {% else %}<p class="muted">No reviews yet.</p>{% endfor %}
+            {% if session.get('user_id') %}
+            <form method="post" action="{{ url_for('review', game_id=game.game_id) }}" class="stack">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label>Recommendation<select name="recommended"><option value="1">Recommended</option><option value="0">Not recommended</option></select></label>
+              <label>Your review<textarea name="content" required maxlength="5000" rows="2"></textarea></label>
+              <button class="secondary">Save review</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+      {% else %}<p class="empty">No games found. {% if session.get('user_id') %}Add a developer and a game below.{% endif %}</p>{% endfor %}
+    </div>
+  </section>
+
+  {% if session.get('user_id') %}
+  <section class="two-col">
+    <div class="panel"><p class="eyebrow">YOUR COLLECTION</p><h2>Library</h2>
+      {% for item in library %}<div class="list-row"><strong>{{ item.title }}</strong><span>Added {{ item.acquired_at }}</span></div>
+      {% else %}<p class="muted">Your library is empty.</p>{% endfor %}
+    </div>
+    <div class="panel"><p class="eyebrow">PURCHASE HISTORY</p><h2>Orders</h2>
+      {% for item in orders %}<div class="list-row"><div><strong>#{{ item.order_id }} · {{ item.title }}</strong><br><span>{{ item.created_at }} · {{ item.status }} · Qty {{ item.quantity }}</span></div><strong>{{ item.purchase_price }}</strong></div>
+      {% else %}<p class="muted">No orders yet.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="two-col">
+    <div class="panel"><p class="eyebrow">PROJECT DATA</p><h2>Add developer</h2>
+      <form method="post" action="{{ url_for('add_developer') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Name<input name="name" required maxlength="200"></label><button>Add developer</button>
+      </form>
+    </div>
+    <div class="panel"><p class="eyebrow">PROJECT DATA</p><h2>Add game</h2>
+      <form method="post" action="{{ url_for('add_game') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Title<input name="title" required maxlength="255"></label>
+        <label>Developer<select name="developer_id" required><option value="">Select a developer</option>{% for developer in developers %}<option value="{{ developer.developer_id }}">{{ developer.name }}</option>{% endfor %}</select></label>
+        <label>Price<input type="number" name="price" required min="0" max="99999999.99" step="0.01"></label>
+        <button {% if not developers %}disabled{% endif %}>Add game</button>
+      </form>
+      {% if not developers %}<p class="muted">Add a developer first.</p>{% endif %}
+    </div>
+  </section>
+  {% endif %}
+</main>
+<footer class="wrap">Local demo only · Use trusted accounts and keep this server on your own computer.</footer>
+</body>
+</html>
