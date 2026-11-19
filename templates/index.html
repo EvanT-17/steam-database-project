@@ -58,10 +58,10 @@
           <div class="buy-row"><strong>{{ game.price }}</strong>
             {% if session.get('user_id') %}
               {% if game.owned %}<span class="owned">In library</span>{% else %}
-              <form method="post" action="{{ url_for('buy', game_id=game.game_id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Buy (demo)</button>
+              <form method="post" action="{{ url_for('add_to_cart', game_id=game.game_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Add to cart</button>
               </form>{% endif %}
-            {% else %}<span class="muted">Sign in to buy</span>{% endif %}
+            {% else %}<span class="muted">Sign in to add to cart</span>{% endif %}
           </div>
           <div class="reviews">
             <h4>Reviews</h4>
@@ -85,9 +85,30 @@
   </section>
 
   {% if session.get('user_id') %}
+  <section class="panel">
+    <p class="eyebrow">PENDING ORDER</p><h2>Shopping cart</h2>
+    {% for item in cart %}
+    <div class="list-row">
+      <div><strong>{{ item.title }}</strong> · {{ item.purchase_price }}</div>
+      <form method="post" action="{{ url_for('remove_from_cart', game_id=item.game_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Remove</button>
+      </form>
+    </div>
+    {% else %}<p class="muted">Your cart is empty.</p>{% endfor %}
+    {% if cart %}
+    <div class="list-row"><strong>Total: {{ cart[0].total_amount }}</strong>
+      <form method="post" action="{{ url_for('checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Checkout (demo)</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
   <section class="two-col">
     <div class="panel"><p class="eyebrow">YOUR COLLECTION</p><h2>Library</h2>
-      {% for item in library %}<div class="list-row"><strong>{{ item.title }}</strong><span>Added {{ item.acquired_at }}</span></div>
+      {% for item in library %}<div class="list-row"><div><strong>{{ item.title }}</strong><br><span>Added {{ item.acquired_at }}</span></div>
+        <form method="post" action="{{ url_for('remove_from_library', game_id=item.game_id) }}" onsubmit="return confirm('Remove this game from your library? You will need to buy it again to add it back.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Remove</button>
+        </form></div>
       {% else %}<p class="muted">Your library is empty.</p>{% endfor %}
     </div>
     <div class="panel"><p class="eyebrow">PURCHASE HISTORY</p><h2>Orders</h2>

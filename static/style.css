@@ -27,6 +27,7 @@ form.stack { display: grid; gap: 12px; }label { display: grid; gap: 5px; font-si
 input, select, textarea { font: inherit; color: #edf5fa; background: #101d28; border: 1px solid #40596c; border-radius: 4px; padding: 10px; width: 100%; }
 button { font: inherit; border: 0; border-radius: 4px; padding: 10px 15px; color: #fff; background: #1676a2; cursor: pointer; }
 button:hover { background: #2194c4; }button:disabled { opacity: .5; cursor: not-allowed; }.secondary { background: #385467; }
+.danger { background: #8c3d42; }.danger:hover { background: #b94e55; }
 .search { display: flex; gap: 8px; }.inline { display: inline-block; margin-left: 12px; }.empty { color: #a7bac8; }
 footer { color: #8299a8; font-size: 13px; padding-top: 10px; padding-bottom: 32px; }
 @media (max-width: 700px) { .auth-grid, .two-col { grid-template-columns: 1fr; }.header-inner, .section-head { align-items: flex-start; flex-direction: column; padding-top: 18px; padding-bottom: 18px; }.search { width: 100%; } }

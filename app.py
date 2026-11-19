@@ -106,6 +106,7 @@ def index():
         )
         reviews = cursor.fetchall()
         library = []
+        cart = []
         orders = []
         if user_id:
             cursor.execute(
@@ -116,17 +117,27 @@ def index():
             )
             library = cursor.fetchall()
             cursor.execute(
+                """SELECT oi.game_id, g.title, oi.purchase_price, o.order_id, o.total_amount
+                   FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
+                   JOIN games g ON g.game_id = oi.game_id
+                   WHERE o.user_id = %s AND o.status = 'pending'
+                   ORDER BY oi.order_item_id""",
+                (user_id,),
+            )
+            cart = cursor.fetchall()
+            cursor.execute(
                 """SELECT o.order_id, o.created_at, o.total_amount, o.status,
                           g.title, oi.purchase_price, oi.quantity
                    FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
                    JOIN games g ON g.game_id = oi.game_id
-                   WHERE o.user_id = %s ORDER BY o.order_id DESC, oi.order_item_id""",
+                   WHERE o.user_id = %s AND o.status <> 'pending'
+                   ORDER BY o.order_id DESC, oi.order_item_id""",
                 (user_id,),
             )
             orders = cursor.fetchall()
     return render_template(
         "index.html", games=games, developers=developers, reviews=reviews,
-        library=library, orders=orders, query=query,
+        library=library, cart=cart, orders=orders, query=query,
     )
 
 
@@ -206,11 +217,26 @@ def add_game():
     return redirect(url_for("index"))
 
 
-@app.post("/buy/<int:game_id>")
-def buy(game_id):
+def lock_user(cursor, user_id):
+    cursor.execute("SELECT user_id FROM users WHERE user_id = %s FOR UPDATE", (user_id,))
+    if not cursor.fetchone():
+        abort(401, "Please log in again.")
+
+
+def pending_order(cursor, user_id):
+    cursor.execute(
+        "SELECT order_id, total_amount FROM orders WHERE user_id = %s AND status = 'pending' FOR UPDATE",
+        (user_id,),
+    )
+    return cursor.fetchone()
+
+
+@app.post("/cart/<int:game_id>/add")
+def add_to_cart(game_id):
     user_id = current_user()
     with database() as (_, cursor):
-        cursor.execute("SELECT game_id, price FROM games WHERE game_id = %s FOR UPDATE", (game_id,))
+        lock_user(cursor, user_id)
+        cursor.execute("SELECT game_id, price FROM games WHERE game_id = %s", (game_id,))
         game = cursor.fetchone()
         if not game:
             abort(404, "Game not found.")
@@ -218,16 +244,92 @@ def buy(game_id):
         if cursor.fetchone():
             flash("This game is already in your library.", "error")
             return redirect(url_for("index"))
-        cursor.execute("INSERT INTO orders (user_id, total_amount, status) VALUES (%s, %s, %s)",
-                       (user_id, game["price"], "completed"))
-        order_id = cursor.lastrowid
+        order = pending_order(cursor, user_id)
+        if order:
+            order_id = order["order_id"]
+            cursor.execute("SELECT game_id FROM order_items WHERE order_id = %s AND game_id = %s",
+                           (order_id, game_id))
+            if cursor.fetchone():
+                flash("This game is already in your cart.", "error")
+                return redirect(url_for("index"))
+            total = order["total_amount"] + game["price"]
+            if total > Decimal("99999999.99"):
+                flash("The cart total exceeds the supported maximum.", "error")
+                return redirect(url_for("index"))
+            cursor.execute("UPDATE orders SET total_amount = %s WHERE order_id = %s", (total, order_id))
+        else:
+            cursor.execute("INSERT INTO orders (user_id, total_amount, status) VALUES (%s, %s, %s)",
+                           (user_id, game["price"], "pending"))
+            order_id = cursor.lastrowid
         cursor.execute(
             "INSERT INTO order_items (order_id, game_id, purchase_price, quantity) VALUES (%s, %s, %s, 1)",
             (order_id, game_id, game["price"]),
         )
-        cursor.execute("INSERT INTO `library` (user_id, game_id, acquisition_source) VALUES (%s, %s, %s)",
-                       (user_id, game_id, "purchase"))
-    flash("Purchase recorded. This is a demo; no payment was processed.")
+    flash("Game added to your cart.")
+    return redirect(url_for("index"))
+
+
+@app.post("/cart/<int:game_id>/remove")
+def remove_from_cart(game_id):
+    user_id = current_user()
+    with database() as (_, cursor):
+        lock_user(cursor, user_id)
+        order = pending_order(cursor, user_id)
+        if not order:
+            abort(404, "Cart item not found.")
+        cursor.execute("SELECT purchase_price FROM order_items WHERE order_id = %s AND game_id = %s",
+                       (order["order_id"], game_id))
+        item = cursor.fetchone()
+        if not item:
+            abort(404, "Cart item not found.")
+        cursor.execute("DELETE FROM order_items WHERE order_id = %s AND game_id = %s", (order["order_id"], game_id))
+        cursor.execute("SELECT COUNT(*) AS item_count FROM order_items WHERE order_id = %s", (order["order_id"],))
+        if cursor.fetchone()["item_count"]:
+            cursor.execute("UPDATE orders SET total_amount = %s WHERE order_id = %s",
+                           (order["total_amount"] - item["purchase_price"], order["order_id"]))
+        else:
+            cursor.execute("DELETE FROM orders WHERE order_id = %s", (order["order_id"],))
+    flash("Game removed from your cart.")
+    return redirect(url_for("index"))
+
+
+@app.post("/cart/checkout")
+def checkout():
+    user_id = current_user()
+    with database() as (_, cursor):
+        lock_user(cursor, user_id)
+        order = pending_order(cursor, user_id)
+        if not order:
+            flash("Your cart is empty.", "error")
+            return redirect(url_for("index"))
+        cursor.execute("SELECT game_id FROM order_items WHERE order_id = %s", (order["order_id"],))
+        items = cursor.fetchall()
+        if not items:
+            flash("Your cart is empty.", "error")
+            return redirect(url_for("index"))
+        for item in items:
+            cursor.execute("SELECT user_id FROM `library` WHERE user_id = %s AND game_id = %s",
+                           (user_id, item["game_id"]))
+            if cursor.fetchone():
+                flash("A game in your cart is already in your library. Remove it before checkout.", "error")
+                return redirect(url_for("index"))
+        for item in items:
+            cursor.execute("INSERT INTO `library` (user_id, game_id, acquisition_source) VALUES (%s, %s, %s)",
+                           (user_id, item["game_id"], "purchase"))
+        cursor.execute("UPDATE orders SET status = %s WHERE order_id = %s", ("completed", order["order_id"]))
+    flash("Checkout complete. This is a demo; no payment was processed.")
+    return redirect(url_for("index"))
+
+
+@app.post("/library/<int:game_id>/remove")
+def remove_from_library(game_id):
+    user_id = current_user()
+    with database() as (_, cursor):
+        lock_user(cursor, user_id)
+        cursor.execute("DELETE FROM `library` WHERE user_id = %s AND game_id = %s", (user_id, game_id))
+        if not cursor.rowcount:
+            abort(404, "Library game not found.")
+    flash("Game removed from your library. Your order history is unchanged.")
     return redirect(url_for("index"))
 
 
