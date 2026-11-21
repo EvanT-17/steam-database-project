@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Admin · Steam Store{% endblock %}
+{% block content %}
+<section><div class="page-intro"><p class="eyebrow">CATALOG MANAGEMENT</p><h1>Admin</h1><p class="muted">Add developers and games to the store.</p></div>
+  <div class="two-col">
+    <div class="panel"><h2>Add Developer</h2>
+      <form method="post" action="{{ url_for('add_developer') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Name<input name="name" required maxlength="200"></label><button type="submit">Add Developer</button>
+      </form>
+    </div>
+    <div class="panel"><h2>Add Game</h2>
+      <form method="post" action="{{ url_for('add_game') }}" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Title<input name="title" required maxlength="255"></label>
+        <label>Developer<select name="developer_id" required><option value="">Select a developer</option>{% for developer in developers %}
+          <option value="{{ developer.developer_id }}">{{ developer.name }}</option>{% endfor %}</select></label>
+        <label>Price<input type="number" name="price" required min="0" max="99999999.99" step="0.01"></label>
+        <button type="submit" {% if not developers %}disabled{% endif %}>Add Game</button>
+      </form>
+      {% if not developers %}<p class="muted">Add a developer first.</p>{% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

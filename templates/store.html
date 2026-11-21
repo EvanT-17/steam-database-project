@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}Game Store · Steam Store{% endblock %}
+{% block content %}
+<section>
+  <div class="section-head"><div><p class="eyebrow">DISCOVER</p><h1>Game Store</h1><p class="muted">Browse the catalog, read reviews and add games to your cart.</p></div>
+    <form method="get" action="{{ url_for('store') }}" class="search">
+      <input name="q" value="{{ query }}" placeholder="Search games" aria-label="Search games"><button type="submit">Search</button>
+    </form>
+  </div>
+  <div class="cards">
+    {% for game in games %}
+    <article class="card">
+      <div class="cover"><span>GAME</span><strong>{{ game.title }}</strong></div>
+      <div class="card-body">
+        <h3>{{ game.title }}</h3>
+        <p class="muted">{{ game.developer }}{% if game.release_date %} · {{ game.release_date }}{% endif %}</p>
+        <div class="buy-row"><strong>{{ game.price }}</strong>
+          {% if game.owned %}<span class="owned">In library</span>
+          {% else %}<form method="post" action="{{ url_for('add_to_cart', game_id=game.game_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Add to cart</button>
+          </form>{% endif %}
+        </div>
+        <div class="reviews"><h4>Reviews</h4>
+          {% for review in reviews if review.game_id == game.game_id %}
+            <div class="review"><strong>{{ review.username }}</strong> · {{ 'Recommended' if review.recommended else 'Not recommended' }}
+              <p>{{ review.content }}</p></div>
+          {% else %}<p class="muted">No reviews yet.</p>{% endfor %}
+          <form method="post" action="{{ url_for('review', game_id=game.game_id) }}" class="stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label>Recommendation<select name="recommended"><option value="1">Recommended</option><option value="0">Not recommended</option></select></label>
+            <label>Your review<textarea name="content" required maxlength="5000" rows="2"></textarea></label>
+            <button class="secondary" type="submit">Save review</button>
+          </form>
+        </div>
+      </div>
+    </article>
+    {% else %}<p class="empty">No games found. You can add one in Admin.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Library · Steam Store{% endblock %}
+{% block content %}
+<section><div class="page-intro"><p class="eyebrow">YOUR COLLECTION</p><h1>Library</h1><p class="muted">Your purchased games.</p></div>
+  <div class="panel">
+    {% for item in library %}
+      <div class="list-row"><div><strong>{{ item.title }}</strong><br><span>Added {{ item.acquired_at }}</span></div>
+        <form method="post" action="{{ url_for('remove_from_library', game_id=item.game_id) }}" onsubmit="return confirm('Remove this game from your library? You will need to buy it again to add it back.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger" type="submit">Remove</button>
+        </form>
+      </div>
+    {% else %}<p class="muted">Your library is empty. <a href="{{ url_for('store') }}">Visit Game Store</a> to browse games.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

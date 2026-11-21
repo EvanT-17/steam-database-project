@@ -1,3 +1,5 @@
+"""Small, local Flask + MySQL game store for a database class project."""
+
 import getpass
 import os
 import secrets
@@ -11,7 +13,8 @@ from pymysql.cursors import DictCursor
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-app.secret_key = secrets.token_bytes(32)
+# Accounts and orders are stored in MySQL; the login session itself is temporary.
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_bytes(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Strict")
 db_config = {
     "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
@@ -72,7 +75,7 @@ def protect_forms():
 
 
 @app.context_processor
-def form_token():
+def template_data():
     if "csrf_token" not in session:
         session["csrf_token"] = secrets.token_urlsafe(32)
     return {"csrf_token": session["csrf_token"]}
@@ -86,8 +89,22 @@ def database_error(error):
 
 @app.get("/")
 def index():
+    return redirect(url_for("store") if session.get("user_id") else url_for("login_page"))
+
+
+@app.get("/login")
+def login_page():
+    if session.get("user_id"):
+        return redirect(url_for("store"))
+    return render_template("auth.html")
+
+
+@app.get("/store")
+def store():
+    if not session.get("user_id"):
+        return redirect(url_for("login_page"))
     query = request.args.get("q", "").strip()
-    user_id = session.get("user_id")
+    user_id = session["user_id"]
     with database() as (_, cursor):
         cursor.execute(
             """SELECT g.game_id, g.title, g.price, g.release_date, d.name AS developer,
@@ -97,48 +114,68 @@ def index():
             (user_id, f"%{query}%"),
         )
         games = cursor.fetchall()
-        cursor.execute("SELECT developer_id, name FROM developers ORDER BY name")
-        developers = cursor.fetchall()
         cursor.execute(
             """SELECT r.game_id, r.content, r.recommended, r.created_at, u.username
                FROM reviews r JOIN users u ON u.user_id = r.user_id
                ORDER BY r.created_at DESC, r.review_id DESC"""
         )
         reviews = cursor.fetchall()
-        library = []
-        cart = []
-        orders = []
-        if user_id:
-            cursor.execute(
-                """SELECT g.game_id, g.title, l.acquired_at
-                   FROM `library` l JOIN games g ON g.game_id = l.game_id
-                   WHERE l.user_id = %s ORDER BY l.acquired_at DESC""",
-                (user_id,),
-            )
-            library = cursor.fetchall()
-            cursor.execute(
-                """SELECT oi.game_id, g.title, oi.purchase_price, o.order_id, o.total_amount
-                   FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
-                   JOIN games g ON g.game_id = oi.game_id
-                   WHERE o.user_id = %s AND o.status = 'pending'
-                   ORDER BY oi.order_item_id""",
-                (user_id,),
-            )
-            cart = cursor.fetchall()
-            cursor.execute(
-                """SELECT o.order_id, o.created_at, o.total_amount, o.status,
-                          g.title, oi.purchase_price, oi.quantity
-                   FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
-                   JOIN games g ON g.game_id = oi.game_id
-                   WHERE o.user_id = %s AND o.status <> 'pending'
-                   ORDER BY o.order_id DESC, oi.order_item_id""",
-                (user_id,),
-            )
-            orders = cursor.fetchall()
-    return render_template(
-        "index.html", games=games, developers=developers, reviews=reviews,
-        library=library, cart=cart, orders=orders, query=query,
-    )
+    return render_template("store.html", games=games, reviews=reviews, query=query, active_page="store")
+
+
+@app.get("/library")
+def library_page():
+    if not session.get("user_id"):
+        return redirect(url_for("login_page"))
+    with database() as (_, cursor):
+        cursor.execute(
+            """SELECT g.game_id, g.title, l.acquired_at
+               FROM `library` l JOIN games g ON g.game_id = l.game_id
+               WHERE l.user_id = %s ORDER BY l.acquired_at DESC""",
+            (session["user_id"],),
+        )
+        library = cursor.fetchall()
+    return render_template("library.html", library=library, active_page="library")
+
+
+@app.get("/orders")
+def orders_page():
+    if not session.get("user_id"):
+        return redirect(url_for("login_page"))
+    tab = request.args.get("tab", "cart")
+    if tab not in ("cart", "history"):
+        tab = "cart"
+    with database() as (_, cursor):
+        cursor.execute(
+            """SELECT oi.game_id, g.title, oi.purchase_price, o.order_id, o.total_amount
+               FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
+               JOIN games g ON g.game_id = oi.game_id
+               WHERE o.user_id = %s AND o.status = 'pending'
+               ORDER BY oi.order_item_id""",
+            (session["user_id"],),
+        )
+        cart = cursor.fetchall()
+        cursor.execute(
+            """SELECT o.order_id, o.created_at, o.total_amount, o.status,
+                      g.title, oi.purchase_price, oi.quantity
+               FROM orders o JOIN order_items oi ON oi.order_id = o.order_id
+               JOIN games g ON g.game_id = oi.game_id
+               WHERE o.user_id = %s AND o.status <> 'pending'
+               ORDER BY o.order_id DESC, oi.order_item_id""",
+            (session["user_id"],),
+        )
+        orders = cursor.fetchall()
+    return render_template("orders.html", cart=cart, orders=orders, tab=tab, active_page="orders")
+
+
+@app.get("/admin")
+def admin_page():
+    if not session.get("user_id"):
+        return redirect(url_for("login_page"))
+    with database() as (_, cursor):
+        cursor.execute("SELECT developer_id, name FROM developers ORDER BY name")
+        developers = cursor.fetchall()
+    return render_template("admin.html", developers=developers, active_page="admin")
 
 
 @app.post("/register")
@@ -154,11 +191,15 @@ def register():
                 "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
                 (username, email, generate_password_hash(password)),
             )
+            user_id = cursor.lastrowid
     except IntegrityError:
         flash("Username or email is already in use.", "error")
-        return redirect(url_for("index"))
-    flash("Account created. You can now log in.")
-    return redirect(url_for("index"))
+        return redirect(url_for("login_page"))
+    session.clear()
+    session["user_id"] = user_id
+    session["username"] = username
+    flash("Account created. Welcome to the Game Store!")
+    return redirect(url_for("store"))
 
 
 @app.post("/login")
@@ -166,16 +207,19 @@ def login():
     username = text_field("username", 100)
     password = text_field("password", 128)
     with database() as (_, cursor):
-        cursor.execute("SELECT user_id, username, password_hash FROM users WHERE username = %s", (username,))
+        cursor.execute(
+            "SELECT user_id, username, password_hash FROM users WHERE username = %s",
+            (username,),
+        )
         user = cursor.fetchone()
     if not user or not check_password_hash(user["password_hash"], password):
         flash("Invalid username or password.", "error")
-    else:
-        session.clear()
-        session["user_id"] = user["user_id"]
-        session["username"] = user["username"]
-        flash("Logged in.")
-    return redirect(url_for("index"))
+        return redirect(url_for("login_page"))
+    session.clear()
+    session["user_id"] = user["user_id"]
+    session["username"] = user["username"]
+    flash("Logged in.")
+    return redirect(url_for("store"))
 
 
 @app.post("/logout")
@@ -183,7 +227,7 @@ def logout():
     current_user()
     session.clear()
     flash("Logged out.")
-    return redirect(url_for("index"))
+    return redirect(url_for("login_page"))
 
 
 @app.post("/developers")
@@ -193,7 +237,7 @@ def add_developer():
     with database() as (_, cursor):
         cursor.execute("INSERT INTO developers (name) VALUES (%s)", (name,))
     flash("Developer added.")
-    return redirect(url_for("index"))
+    return redirect(url_for("admin_page"))
 
 
 @app.post("/games")
@@ -205,16 +249,18 @@ def add_game():
         price = Decimal(request.form.get("price", ""))
         if not price.is_finite() or price < 0 or price > Decimal("99999999.99") or price.as_tuple().exponent < -2:
             raise InvalidOperation
-    except InvalidOperation:
+    except (InvalidOperation, TypeError):
         abort(400, "Enter a valid non-negative price with at most two decimal places.")
     with database() as (_, cursor):
         cursor.execute("SELECT developer_id FROM developers WHERE developer_id = %s", (developer_id,))
         if not cursor.fetchone():
             abort(400, "Developer does not exist.")
-        cursor.execute("INSERT INTO games (developer_id, title, price) VALUES (%s, %s, %s)",
-                       (developer_id, title, price))
-    flash("Game added.")
-    return redirect(url_for("index"))
+        cursor.execute(
+            "INSERT INTO games (developer_id, title, price) VALUES (%s, %s, %s)",
+            (developer_id, title, price),
+        )
+    flash("Game added. You can view it in Game Store.")
+    return redirect(url_for("admin_page"))
 
 
 def lock_user(cursor, user_id):
@@ -243,30 +289,33 @@ def add_to_cart(game_id):
         cursor.execute("SELECT user_id FROM `library` WHERE user_id = %s AND game_id = %s", (user_id, game_id))
         if cursor.fetchone():
             flash("This game is already in your library.", "error")
-            return redirect(url_for("index"))
+            return redirect(url_for("store"))
         order = pending_order(cursor, user_id)
         if order:
             order_id = order["order_id"]
-            cursor.execute("SELECT game_id FROM order_items WHERE order_id = %s AND game_id = %s",
-                           (order_id, game_id))
+            cursor.execute(
+                "SELECT game_id FROM order_items WHERE order_id = %s AND game_id = %s", (order_id, game_id)
+            )
             if cursor.fetchone():
                 flash("This game is already in your cart.", "error")
-                return redirect(url_for("index"))
+                return redirect(url_for("store"))
             total = order["total_amount"] + game["price"]
             if total > Decimal("99999999.99"):
                 flash("The cart total exceeds the supported maximum.", "error")
-                return redirect(url_for("index"))
+                return redirect(url_for("store"))
             cursor.execute("UPDATE orders SET total_amount = %s WHERE order_id = %s", (total, order_id))
         else:
-            cursor.execute("INSERT INTO orders (user_id, total_amount, status) VALUES (%s, %s, %s)",
-                           (user_id, game["price"], "pending"))
+            cursor.execute(
+                "INSERT INTO orders (user_id, total_amount, status) VALUES (%s, %s, %s)",
+                (user_id, game["price"], "pending"),
+            )
             order_id = cursor.lastrowid
         cursor.execute(
             "INSERT INTO order_items (order_id, game_id, purchase_price, quantity) VALUES (%s, %s, %s, 1)",
             (order_id, game_id, game["price"]),
         )
     flash("Game added to your cart.")
-    return redirect(url_for("index"))
+    return redirect(url_for("orders_page"))
 
 
 @app.post("/cart/<int:game_id>/remove")
@@ -277,20 +326,26 @@ def remove_from_cart(game_id):
         order = pending_order(cursor, user_id)
         if not order:
             abort(404, "Cart item not found.")
-        cursor.execute("SELECT purchase_price FROM order_items WHERE order_id = %s AND game_id = %s",
-                       (order["order_id"], game_id))
+        cursor.execute(
+            "SELECT purchase_price FROM order_items WHERE order_id = %s AND game_id = %s",
+            (order["order_id"], game_id),
+        )
         item = cursor.fetchone()
         if not item:
             abort(404, "Cart item not found.")
-        cursor.execute("DELETE FROM order_items WHERE order_id = %s AND game_id = %s", (order["order_id"], game_id))
+        cursor.execute(
+            "DELETE FROM order_items WHERE order_id = %s AND game_id = %s", (order["order_id"], game_id)
+        )
         cursor.execute("SELECT COUNT(*) AS item_count FROM order_items WHERE order_id = %s", (order["order_id"],))
         if cursor.fetchone()["item_count"]:
-            cursor.execute("UPDATE orders SET total_amount = %s WHERE order_id = %s",
-                           (order["total_amount"] - item["purchase_price"], order["order_id"]))
+            cursor.execute(
+                "UPDATE orders SET total_amount = %s WHERE order_id = %s",
+                (order["total_amount"] - item["purchase_price"], order["order_id"]),
+            )
         else:
             cursor.execute("DELETE FROM orders WHERE order_id = %s", (order["order_id"],))
     flash("Game removed from your cart.")
-    return redirect(url_for("index"))
+    return redirect(url_for("orders_page"))
 
 
 @app.post("/cart/checkout")
@@ -301,24 +356,28 @@ def checkout():
         order = pending_order(cursor, user_id)
         if not order:
             flash("Your cart is empty.", "error")
-            return redirect(url_for("index"))
+            return redirect(url_for("orders_page"))
         cursor.execute("SELECT game_id FROM order_items WHERE order_id = %s", (order["order_id"],))
         items = cursor.fetchall()
         if not items:
             flash("Your cart is empty.", "error")
-            return redirect(url_for("index"))
+            return redirect(url_for("orders_page"))
         for item in items:
-            cursor.execute("SELECT user_id FROM `library` WHERE user_id = %s AND game_id = %s",
-                           (user_id, item["game_id"]))
+            cursor.execute(
+                "SELECT user_id FROM `library` WHERE user_id = %s AND game_id = %s",
+                (user_id, item["game_id"]),
+            )
             if cursor.fetchone():
                 flash("A game in your cart is already in your library. Remove it before checkout.", "error")
-                return redirect(url_for("index"))
+                return redirect(url_for("orders_page"))
         for item in items:
-            cursor.execute("INSERT INTO `library` (user_id, game_id, acquisition_source) VALUES (%s, %s, %s)",
-                           (user_id, item["game_id"], "purchase"))
+            cursor.execute(
+                "INSERT INTO `library` (user_id, game_id, acquisition_source) VALUES (%s, %s, %s)",
+                (user_id, item["game_id"], "purchase"),
+            )
         cursor.execute("UPDATE orders SET status = %s WHERE order_id = %s", ("completed", order["order_id"]))
-    flash("Checkout complete. This is a demo; no payment was processed.")
-    return redirect(url_for("index"))
+    flash("Checkout complete.")
+    return redirect(url_for("orders_page", tab="history"))
 
 
 @app.post("/library/<int:game_id>/remove")
@@ -330,7 +389,7 @@ def remove_from_library(game_id):
         if not cursor.rowcount:
             abort(404, "Library game not found.")
     flash("Game removed from your library. Your order history is unchanged.")
-    return redirect(url_for("index"))
+    return redirect(url_for("library_page"))
 
 
 @app.post("/reviews/<int:game_id>")
@@ -351,7 +410,7 @@ def review(game_id):
             (user_id, game_id, int(recommendation), content, int(recommendation), content),
         )
     flash("Review saved.")
-    return redirect(url_for("index"))
+    return redirect(url_for("store"))
 
 
 if __name__ == "__main__":

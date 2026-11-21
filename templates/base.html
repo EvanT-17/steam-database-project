@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Steam Store{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="{{ url_for('store') if session.get('user_id') else url_for('login_page') }}">STEAM</a>
+    {% if session.get('user_id') %}
+    <div class="account">
+      <span>Hi, <strong>{{ session.get('username') }}</strong></span>
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="secondary small-button" type="submit">Log out</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% if session.get('user_id') %}
+  <nav class="site-nav wrap" aria-label="Main navigation">
+    <a href="{{ url_for('store') }}" class="{{ 'active' if active_page == 'store' else '' }}" {% if active_page == 'store' %}aria-current="page"{% endif %}>Game Store</a>
+    <a href="{{ url_for('library_page') }}" class="{{ 'active' if active_page == 'library' else '' }}" {% if active_page == 'library' %}aria-current="page"{% endif %}>Library</a>
+    <a href="{{ url_for('orders_page') }}" class="{{ 'active' if active_page == 'orders' else '' }}" {% if active_page == 'orders' %}aria-current="page"{% endif %}>Order</a>
+    <a href="{{ url_for('admin_page') }}" class="{{ 'active' if active_page == 'admin' else '' }}" {% if active_page == 'admin' %}aria-current="page"{% endif %}>Admin</a>
+  </nav>
+  {% endif %}
+</header>
+<main class="wrap">
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="alert {{ category }}" role="status">{{ message }}</div>
+  {% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
